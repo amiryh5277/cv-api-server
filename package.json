@@ -1,0 +1,16 @@
+
+{
+  "name": "cv-api-server",
+  "version": "1.0.0",
+  "main": "analyze_api.js",
+  "type": "module",
+  "scripts": {
+    "start": "node analyze_api.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "node-fetch": "^2.6.7",
+    "cors": "^2.8.5"
+  }
+}
