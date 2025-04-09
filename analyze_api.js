@@ -1,63 +1,74 @@
-
-import express from "express";
-import fetch from "node-fetch";
-import dotenv from "dotenv";
-import cors from "cors";
-
-dotenv.config();
+const express = require("express");
+const multer = require("multer");
+const fs = require("fs");
+const pdfParse = require("pdf-parse");
+const mammoth = require("mammoth");
+const { Configuration, OpenAIApi } = require("openai");
+require("dotenv").config();
 
 const app = express();
-const PORT = process.env.PORT;
+const port = process.env.PORT || 10000;
 
-// Allow all origins for testing purposes
-app.use(cors({ origin: "*" }));
+const upload = multer({ dest: "uploads/" });
+
+const configuration = new Configuration({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+const openai = new OpenAIApi(configuration);
+
 app.use(express.json());
 
-app.post("/api/analyze", async (req, res) => {
-  const { resumeText, jobText } = req.body;
+app.post("/api/analyze", upload.single("cvFile"), async (req, res) => {
+  const jobText = req.body.jobText;
+  const file = req.file;
 
-  if (!resumeText || !jobText) {
-    return res.status(400).json({ error: "Missing resumeText or jobText" });
+  if (!file || !jobText) {
+    return res.status(400).json({ error: "Missing file or job description." });
   }
 
-  const prompt = `הנה קורות החיים שלי:
-${resumeText}
-
-והנה תיאור המשרה:
-${jobText}
-
-1. סרוק את שני הקבצים וזיהה מילות מפתח חשובות בתיאור המשרה.
-2. ציין אילו מילות מפתח לא מופיעות בקו״ח שלי.
-3. תן ציון התאמה כללי (באחוזים) בין קורות החיים למשרה.`;
-
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "gpt-4",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.5
-      })
-    });
+    let resumeText = "";
 
-    const data = await response.json();
-
-    if (data.error) {
-      console.error("OpenAI Error:", data.error);
-      return res.status(500).json({ error: data.error.message });
+    if (file.mimetype === "application/pdf") {
+      const dataBuffer = fs.readFileSync(file.path);
+      const parsed = await pdfParse(dataBuffer);
+      resumeText = parsed.text;
+    } else if (
+      file.mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      file.mimetype === "application/msword"
+    ) {
+      const data = fs.readFileSync(file.path);
+      const result = await mammoth.extractRawText({ buffer: data });
+      resumeText = result.value;
+    } else {
+      return res.status(400).json({ error: "Unsupported file type." });
     }
 
-    res.json({ result: data.choices[0].message.content });
+    const prompt = `נתח את קורות החיים הבאים:
+${resumeText}
+
+מול תיאור המשרה הבא:
+${jobText}
+
+החזר אחוז התאמה, מילות מפתח חסרות, וניתוח טקסטואלי בעברית.`;
+
+    const response = await openai.createChatCompletion({
+      model: "gpt-4",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7,
+    });
+
+    res.json({ result: response.data.choices[0].message.content });
   } catch (err) {
-    console.error("Server Error:", err);
-    res.status(500).json({ error: "Internal server error" });
+    console.error("Error:", err);
+    res.status(500).json({ error: "Internal server error." });
+  } finally {
+    if (file && fs.existsSync(file.path)) {
+      fs.unlinkSync(file.path); // Clean up uploaded file
+    }
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+app.listen(port, () => {
+  console.log(`Server running on http://localhost:${port}`);
 });
